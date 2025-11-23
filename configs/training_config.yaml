@@ -1,0 +1,98 @@
+# Training Configuration
+# Hyperparameters for RL agent training
+
+# Agent Selection
+agent:
+  type: 'ppo'                  # Agent type: 'ppo', 'dqn', 'a2c', 'sac'
+  
+# PPO Hyperparameters
+ppo:
+  learning_rate: 0.0003
+  n_steps: 2048                # Steps per update
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99                  # Discount factor
+  gae_lambda: 0.95             # GAE parameter
+  clip_range: 0.2              # PPO clip range
+  ent_coef: 0.01               # Entropy coefficient
+  vf_coef: 0.5                 # Value function coefficient
+  max_grad_norm: 0.5           # Gradient clipping
+  policy: 'MlpPolicy'
+  
+# DQN Hyperparameters
+dqn:
+  learning_rate: 0.0001
+  buffer_size: 100000
+  learning_starts: 1000
+  batch_size: 32
+  tau: 0.005                   # Target network update rate
+  gamma: 0.99
+  train_freq: 4
+  gradient_steps: 1
+  target_update_interval: 1000
+  exploration_fraction: 0.1
+  exploration_initial_eps: 1.0
+  exploration_final_eps: 0.05
+  policy: 'MlpPolicy'
+
+# A2C Hyperparameters
+a2c:
+  learning_rate: 0.0007
+  n_steps: 5
+  gamma: 0.99
+  gae_lambda: 1.0
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  policy: 'MlpPolicy'
+
+# SAC Hyperparameters
+sac:
+  learning_rate: 0.0003
+  buffer_size: 1000000
+  learning_starts: 100
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  ent_coef: 'auto'
+  policy: 'MlpPolicy'
+
+# Network Architecture
+network:
+  policy_layers: [64, 64]      # Hidden layers for policy network
+  value_layers: [64, 64]       # Hidden layers for value network
+  activation: 'tanh'           # Activation function: 'tanh', 'relu'
+
+# Training Parameters
+training:
+  total_timesteps: 300000      # Total training timesteps
+  eval_freq: 10000             # Evaluate every N steps
+  save_freq: 25000             # Save model every N steps
+  log_interval: 10             # Log every N episodes
+  verbose: 1                   # Verbosity level
+  
+# Callbacks
+callbacks:
+  use_early_stopping: true
+  patience: 50000              # Early stopping patience
+  min_delta: 0.0               # Minimum improvement
+  
+# Evaluation
+evaluation:
+  n_eval_episodes: 50
+  deterministic: true
+  render: false
+
+# Logging
+logging:
+  tensorboard: true
+  tensorboard_log: './results/tensorboard/'
+  log_dir: './results/logs/'
+  
+# Model Saving
+saving:
+  save_path: './saved_models/'
+  best_model_name: 'best_model'
+  final_model_name: 'final_model'
