@@ -41,10 +41,14 @@ venv.bak/
 
 # Training artifacts
 logs/
+logs_real/
+tensorboard_adaptive/
 saved_models/*.zip
 saved_models/*.pkl
+saved_models_real/*.zip
 results/
 *.pdb
+notebooks/
 
 # Data
 data/*.csv
@@ -63,3 +67,9 @@ Thumbs.db
 *.tmp
 *.bak
 *.cache
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+node_modules/

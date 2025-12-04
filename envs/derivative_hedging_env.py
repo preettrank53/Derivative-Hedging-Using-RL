@@ -17,7 +17,7 @@ import numpy as np
 from typing import Dict, Optional, Tuple, Any
 
 from envs.option_pricing import BlackScholesModel, calculate_greeks
-from envs.market_simulator import GeometricBrownianMotion, MarketConfig
+from envs.market_simulator import GeometricBrownianMotion, MarketConfig, RealMarketSimulator, RealMarketConfig
 
 
 class DerivativeHedgingEnv(gym.Env):
@@ -162,8 +162,24 @@ class DerivativeHedgingEnv(gym.Env):
                 dt=self.dt
             )
             self.market_sim = GeometricBrownianMotion(config)
+        elif self.market_model == 'real':
+            # Use real market data from Yahoo Finance
+            config = RealMarketConfig(
+                ticker=getattr(self, 'ticker', 'TSLA'),
+                start_date='2020-01-01',
+                end_date='2023-12-31',
+                r=self.r,
+                dt=self.dt
+            )
+            mode = getattr(self, 'market_mode', 'train')
+            self.market_sim = RealMarketSimulator(config, mode=mode)
+            # Override S0 with actual market price
+            self.S0 = self.market_sim.prices[0]
+            # CRITICAL: Set strike K to ATM (at-the-money) based on real stock price
+            # This ensures proper hedging dynamics - without this, K=100 vs S=$500 makes delta always ~1
+            self.K = self.S0  # ATM option
         else:
-            raise NotImplementedError(f"Market model '{self.market_model}' not yet implemented. Use 'gbm'.")
+            raise NotImplementedError(f"Market model '{self.market_model}' not yet implemented. Use 'gbm' or 'real'.")
     
     def _define_spaces(self):
         """Define observation and action spaces."""
@@ -221,17 +237,7 @@ class DerivativeHedgingEnv(gym.Env):
         # This forces the AI to adapt to different market "weathers"
         self.sigma = np.random.uniform(0.1, 0.4)
         
-        # Reset state variables
-        self.S = self.S0
-        self.t = 0
-        self.current_step = 0
-        self.hedge_position = 0.0
-        self.pnl = 0.0
-        self.cash = 0.0
-        self.total_transaction_cost = 0.0
-        self.done = False
-        
-        # Reset market simulator with new volatility
+        # Reset market simulator first to get starting price
         if self.market_model == 'gbm':
             config = MarketConfig(
                 S0=self.S0,
@@ -241,7 +247,26 @@ class DerivativeHedgingEnv(gym.Env):
                 dt=self.dt
             )
             self.market_sim = GeometricBrownianMotion(config)
-        self.market_sim.reset(self.S0)
+            self.market_sim.reset(self.S0)
+            self.S = self.S0
+        elif self.market_model == 'real':
+            # For real market, reset and get the actual starting price
+            start_price = self.market_sim.reset(random_start=True)
+            self.S = start_price
+            self.S0 = start_price  # Update S0 to current episode's start
+            self.K = start_price   # CRITICAL: ATM option at current price
+        else:
+            self.market_sim.reset(self.S0)
+            self.S = self.S0
+        
+        # Reset state variables
+        self.t = 0
+        self.current_step = 0
+        self.hedge_position = 0.0
+        self.pnl = 0.0
+        self.cash = 0.0
+        self.total_transaction_cost = 0.0
+        self.done = False
         
         # Calculate initial option value
         tau = self.T - self.t * self.dt
@@ -414,35 +439,20 @@ class DerivativeHedgingEnv(gym.Env):
         float
             Scaled reward
         """
-        # --- FINAL FIX: DELTA-GUIDED REWARD ---
+        # WORKING ADAPTIVE REWARD: Simple and effective
+        # Goal: Minimize P&L variance while managing transaction costs
         
-        # Part A: Variance Penalty (Minimize P&L fluctuations)
-        # We multiply by 100 to make the signal LOUD.
-        reward_pnl = -(step_pnl ** 2) * 100.0
+        # Part 1: Penalize P&L variance (main objective)
+        # Normalize by S0 to make scale-independent across different stocks
+        normalized_pnl = step_pnl / (self.S0 + 1e-8)
+        reward_variance = -(normalized_pnl ** 2) * 10.0  # Reduced from 100x
         
-        # Part B: Delta Tracking Penalty (Listen to the Math!)
-        # If your hedge is far from the 'Real' Delta, you get punished.
-        # CRANKED UP TO 1000.0 - "MAGNET" REWARD - Agent must follow delta perfectly
-        current_delta = greeks['delta']
+        # Part 2: Penalize transaction costs (encourage efficient trading)
+        normalized_cost = transaction_cost / (self.S0 + 1e-8)
+        reward_cost = -normalized_cost * 20.0
         
-        # Calculate actual hedge ratio (what percentage of delta we're hedging)
-        # hedge_position is in shares, so divide by (delta * |option_position|) to get ratio
-        if abs(current_delta * self.option_position) > 1e-6:
-            actual_hedge_ratio = self.hedge_position / (abs(current_delta * self.option_position))
-        else:
-            actual_hedge_ratio = 0.5  # Default for zero delta
-        
-        # Penalize deviation from 100% delta hedge (ratio should be near 1.0)
-        # But our action outputs hedge_ratio [0,1], so we compare directly
-        target_hedge_ratio = 1.0  # Perfect delta hedge
-        delta_gap = abs(actual_hedge_ratio - target_hedge_ratio)
-        reward_tracking = -(delta_gap ** 2) * 1000.0  # MAGNET FORCE: 1000x penalty!
-        
-        # Part C: Small penalty for transaction costs
-        reward_cost = -transaction_cost * 10.0
-        
-        # Combine all components
-        reward = reward_pnl + reward_tracking + reward_cost
+        # Simple, focused reward
+        reward = reward_variance + reward_cost
         
         # Scale reward
         reward *= self.reward_scaling
