@@ -420,10 +420,13 @@ class DerivativeHedgingEnv(gym.Env):
         """
         Calculate reward for current step.
         
+        IMPROVED REWARD FUNCTION v2.0
+        
         The reward encourages:
-        1. Minimizing P&L variance (squared P&L penalty)
-        2. Staying close to theoretical delta (delta tracking)
-        3. Minimizing transaction costs
+        1. Minimizing P&L variance (primary hedging objective)
+        2. Staying close to delta hedge (baseline good strategy)
+        3. Reasonable transaction costs (but not over-penalized)
+        4. Bonus for low volatility of P&L
         
         Parameters:
         -----------
@@ -439,20 +442,48 @@ class DerivativeHedgingEnv(gym.Env):
         float
             Scaled reward
         """
-        # WORKING ADAPTIVE REWARD: Simple and effective
-        # Goal: Minimize P&L variance while managing transaction costs
-        
-        # Part 1: Penalize P&L variance (main objective)
-        # Normalize by S0 to make scale-independent across different stocks
+        # === PART 1: P&L VARIANCE PENALTY (Primary Objective) ===
+        # Goal: Minimize daily P&L swings - this is THE core purpose of hedging
         normalized_pnl = step_pnl / (self.S0 + 1e-8)
-        reward_variance = -(normalized_pnl ** 2) * 10.0  # Reduced from 100x
         
-        # Part 2: Penalize transaction costs (encourage efficient trading)
+        # Use absolute value penalty (less harsh than squared for small moves)
+        # This encourages consistently flat P&L
+        reward_variance = -abs(normalized_pnl) * 50.0
+        
+        # === PART 2: DELTA TRACKING REWARD (Stay Close to Delta Hedge) ===
+        # Reward for keeping hedge position close to delta * option_position
+        # This ensures the AI learns that delta hedging is a GOOD baseline
+        delta = greeks['delta']
+        ideal_hedge = delta * abs(self.option_position)  # Perfect delta hedge
+        hedge_error = abs(self.hedge_position - ideal_hedge)
+        
+        # Reward for being close to delta (max reward when perfectly hedged)
+        # Normalized by option position size
+        normalized_hedge_error = hedge_error / (abs(self.option_position) + 1e-8)
+        reward_delta_tracking = -normalized_hedge_error * 30.0
+        
+        # === PART 3: TRANSACTION COST (Reduced Penalty) ===
+        # Still penalize excessive trading, but less aggressively
+        # We want the AI to hedge, not avoid trading entirely
         normalized_cost = transaction_cost / (self.S0 + 1e-8)
-        reward_cost = -normalized_cost * 20.0
+        reward_cost = -normalized_cost * 5.0  # Reduced from 20x to 5x
         
-        # Simple, focused reward
-        reward = reward_variance + reward_cost
+        # === PART 4: SURVIVAL BONUS ===
+        # Small positive reward for each step survived without extreme losses
+        # This encourages consistent, safe behavior
+        survival_bonus = 0.1
+        
+        # === PART 5: HEDGE EFFECTIVENESS BONUS ===
+        # If we're well hedged (low P&L variance), give extra reward
+        if abs(normalized_pnl) < 0.001:  # Very flat P&L (good hedging!)
+            hedge_bonus = 1.0
+        elif abs(normalized_pnl) < 0.005:  # Reasonably flat
+            hedge_bonus = 0.5
+        else:
+            hedge_bonus = 0.0
+        
+        # Combine all components
+        reward = reward_variance + reward_delta_tracking + reward_cost + survival_bonus + hedge_bonus
         
         # Scale reward
         reward *= self.reward_scaling
